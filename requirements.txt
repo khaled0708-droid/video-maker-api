@@ -1,0 +1,7 @@
+flask
+flask-cors
+cloudinary
+moviepy
+pillow
+numpy
+gunicorn
