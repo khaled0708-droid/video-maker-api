@@ -1,5 +1,6 @@
 import os
 import tempfile
+import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import cloudinary
@@ -8,8 +9,9 @@ import numpy as np
 from moviepy import ImageClip, TextClip, CompositeVideoClip, concatenate_videoclips
 import moviepy.video.fx as fx
 from PIL import Image
+import io
 
-# تكوين Cloudinary من المتغيرات البيئية (سنضيفها في Railway)
+# تكوين Cloudinary من المتغيرات البيئية
 cloudinary.config(
     cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME', 'khaledtn'),
     api_key=os.environ.get('CLOUDINARY_API_KEY', '948831227617247'),
@@ -38,33 +40,39 @@ def zoom_in_effect(clip, zoom_ratio=0.04):
 @app.route('/make_video', methods=['POST'])
 def start_production():
     try:
-        # استقبال البيانات: scenario (نص) و images (ملفات)
-        scenario = request.form.get('scenario', 'Ai_Film').replace(" ", "_")
-        files = request.files.getlist('images')
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "Error", "message": "Invalid JSON"}), 400
 
-        if not files:
-            return jsonify({
-                "status": "Error",
-                "message": "No images uploaded"
-            }), 400
+        scenario = data.get('scenario', 'Ai_Film').replace(" ", "_")
+        images_base64 = data.get('images', [])
 
-        # مجلد مؤقت
+        if not images_base64:
+            return jsonify({"status": "Error", "message": "No images uploaded"}), 400
+
         temp_dir = tempfile.mkdtemp()
         image_paths = []
 
-        for file in files:
-            if file.filename.lower().endswith(('.jpg', '.png', '.jpeg')):
-                file_path = os.path.join(temp_dir, file.filename)
-                file.save(file_path)
-                image_paths.append(file_path)
+        # تحويل كل Base64 إلى صورة وحفظها مؤقتًا
+        for idx, img_base64 in enumerate(images_base64):
+            try:
+                # إزالة رأس data:image/jpeg;base64, إن وجد
+                if ',' in img_base64:
+                    img_base64 = img_base64.split(',')[1]
+                img_data = base64.b64decode(img_base64)
+                img = Image.open(io.BytesIO(img_data))
+                # حفظ الصورة بصيغة PNG للحفاظ على الجودة
+                img_path = os.path.join(temp_dir, f"image_{idx}.png")
+                img.save(img_path)
+                image_paths.append(img_path)
+            except Exception as e:
+                print(f"Error decoding image {idx}: {str(e)}")
+                continue
 
         if not image_paths:
-            return jsonify({
-                "status": "Error",
-                "message": "No valid images found"
-            }), 400
+            return jsonify({"status": "Error", "message": "No valid images after decoding"}), 400
 
-        # إنشاء مقاطع الفيديو
+        # إنشاء مقاطع الفيديو (نفس الكود السابق)
         all_clips = []
         for img_path in image_paths:
             clip = ImageClip(img_path, duration=5).resized(height=720)
