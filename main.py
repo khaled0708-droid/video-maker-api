@@ -1,6 +1,6 @@
 import os
 import tempfile
-import base64
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import cloudinary
@@ -9,7 +9,7 @@ import numpy as np
 from moviepy import ImageClip, TextClip, CompositeVideoClip, concatenate_videoclips
 import moviepy.video.fx as fx
 from PIL import Image
-import io
+from io import BytesIO
 
 # تكوين Cloudinary من المتغيرات البيئية
 cloudinary.config(
@@ -37,6 +37,18 @@ def zoom_in_effect(clip, zoom_ratio=0.04):
         return np.array(resized_img.crop((left, top, left + base_size[1], top + base_size[0])))
     return clip.transform(effect)
 
+def download_image(url):
+    """تحميل صورة من رابط وحفظها في ملف مؤقت"""
+    response = requests.get(url, timeout=10)
+    if response.status_code == 200:
+        img = Image.open(BytesIO(response.content))
+        # حفظ الصورة بصيغة PNG في ملف مؤقت
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+        img.save(temp_file.name)
+        return temp_file.name
+    else:
+        raise Exception(f"Failed to download image from {url}")
+
 @app.route('/make_video', methods=['POST'])
 def start_production():
     try:
@@ -45,32 +57,27 @@ def start_production():
             return jsonify({"status": "Error", "message": "Invalid JSON"}), 400
 
         scenario = data.get('scenario', 'Ai_Film').replace(" ", "_")
-        images_base64 = data.get('images', [])
+        image_urls = data.get('image_urls', [])
 
-        if not images_base64:
-            return jsonify({"status": "Error", "message": "No images uploaded"}), 400
+        if not image_urls:
+            return jsonify({"status": "Error", "message": "No image URLs provided"}), 400
 
+        # مجلد مؤقت لتحميل الصور
         temp_dir = tempfile.mkdtemp()
         image_paths = []
 
-        # تحويل كل Base64 إلى صورة وحفظها مؤقتًا
-        for idx, img_base64 in enumerate(images_base64):
+        # تحميل كل صورة من الرابط
+        for idx, url in enumerate(image_urls):
             try:
-                # إزالة رأس data:image/jpeg;base64, إن وجد
-                if ',' in img_base64:
-                    img_base64 = img_base64.split(',')[1]
-                img_data = base64.b64decode(img_base64)
-                img = Image.open(io.BytesIO(img_data))
-                # حفظ الصورة بصيغة PNG للحفاظ على الجودة
-                img_path = os.path.join(temp_dir, f"image_{idx}.png")
-                img.save(img_path)
+                img_path = download_image(url)
                 image_paths.append(img_path)
+                print(f"Downloaded {url} to {img_path}")
             except Exception as e:
-                print(f"Error decoding image {idx}: {str(e)}")
+                print(f"Error downloading image {idx}: {str(e)}")
                 continue
 
         if not image_paths:
-            return jsonify({"status": "Error", "message": "No valid images after decoding"}), 400
+            return jsonify({"status": "Error", "message": "No valid images after downloading"}), 400
 
         # إنشاء مقاطع الفيديو (نفس الكود السابق)
         all_clips = []
