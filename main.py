@@ -1,4 +1,5 @@
 import os
+import tempfile
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import cloudinary
@@ -8,16 +9,13 @@ from moviepy import ImageClip, TextClip, CompositeVideoClip, concatenate_videocl
 import moviepy.video.fx as fx
 from PIL import Image
 
+# تكوين Cloudinary من المتغيرات البيئية (سنضيفها في Railway)
 cloudinary.config(
-    cloud_name = "khaledtn", 
-    api_key = "948831227617247", 
-    api_secret = "kkjEpD7pbYaNdlpkPsU2V2Pt0pk", 
-    secure = True
+    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME', 'khaledtn'),
+    api_key=os.environ.get('CLOUDINARY_API_KEY', '948831227617247'),
+    api_secret=os.environ.get('CLOUDINARY_API_SECRET', 'kkjEpD7pbYaNdlpkPsU2V2Pt0pk'),
+    secure=True
 )
-
-imagemagick_path = r"C:\Users\azerty\Desktop\ImageMagick\magick.exe"
-os.environ["IMAGEMAGICK_BINARY"] = imagemagick_path
-cars_folder = r"C:\Users\azerty\Desktop\voitures"
 
 app = Flask(__name__)
 CORS(app)
@@ -40,38 +38,35 @@ def zoom_in_effect(clip, zoom_ratio=0.04):
 @app.route('/make_video', methods=['POST'])
 def start_production():
     try:
-        data = request.json
-        print("=" * 50)
-        print("Request received from FlutterFlow")
-        print(f"Data: {data}")
-        print("=" * 50)
+        # استقبال البيانات: scenario (نص) و images (ملفات)
+        scenario = request.form.get('scenario', 'Ai_Film').replace(" ", "_")
+        files = request.files.getlist('images')
 
-        video_title = data.get('scenario', 'Ai_Film').replace(" ", "_")
-
-        if not os.path.exists(cars_folder):
+        if not files:
             return jsonify({
                 "status": "Error",
-                "message": "Folder not found",
-                "video_url": "",
-                "video_title": ""
-            }), 500
+                "message": "No images uploaded"
+            }), 400
 
-        images = [f for f in os.listdir(cars_folder) 
-                  if f.endswith(('.jpg', '.png', '.jpeg'))]
+        # مجلد مؤقت
+        temp_dir = tempfile.mkdtemp()
+        image_paths = []
 
-        if not images:
+        for file in files:
+            if file.filename.lower().endswith(('.jpg', '.png', '.jpeg')):
+                file_path = os.path.join(temp_dir, file.filename)
+                file.save(file_path)
+                image_paths.append(file_path)
+
+        if not image_paths:
             return jsonify({
                 "status": "Error",
-                "message": "No images found",
-                "video_url": "",
-                "video_title": ""
-            }), 500
+                "message": "No valid images found"
+            }), 400
 
+        # إنشاء مقاطع الفيديو
         all_clips = []
-        for img_name in images:
-            img_path = os.path.join(cars_folder, img_name)
-            print(f"Processing: {img_name}")
-
+        for img_path in image_paths:
             clip = ImageClip(img_path, duration=5).resized(height=720)
             if clip.w % 2 != 0:
                 clip = clip.resized(width=clip.w - 1)
@@ -89,28 +84,34 @@ def start_production():
                 CompositeVideoClip([clip, txt]).with_effects([fx.FadeIn(1), fx.FadeOut(1)])
             )
 
-        output_path = os.path.join(os.path.expanduser("~"), "Desktop", f"{video_title}.mp4")
+        # حفظ الفيديو النهائي
+        output_path = os.path.join(temp_dir, f"{scenario}.mp4")
         final_video = concatenate_videoclips(all_clips, method="compose")
-
-        print("Saving video...")
         final_video.write_videofile(output_path, fps=24, codec="libx264")
 
-        print("Uploading to Cloudinary...")
+        # رفع إلى Cloudinary
         upload_result = cloudinary.uploader.upload(
             output_path,
-            public_id=video_title,
+            public_id=scenario,
             resource_type="video",
             chunk_size=6000000
         )
 
         secure_url = upload_result.get('secure_url')
-        print(f"Success! URL: {secure_url}")
+
+        # تنظيف الملفات المؤقتة
+        for path in image_paths + [output_path]:
+            try:
+                os.remove(path)
+            except:
+                pass
+        os.rmdir(temp_dir)
 
         return jsonify({
             "status": "Success",
             "message": "Video created successfully",
             "video_url": secure_url,
-            "video_title": video_title
+            "video_title": scenario
         }), 200
 
     except Exception as e:
@@ -122,9 +123,10 @@ def start_production():
             "video_title": ""
         }), 500
 
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({"message": "Video Maker API is running"}), 200
+
 if __name__ == '__main__':
-    print("=" * 60)
-    print("Server running on port 8080")
-    print("http://192.168.1.110:8080/make_video")
-    print("=" * 60)
-    app.run(host='0.0.0.0', port=8080, threaded=True)
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, threaded=True)
