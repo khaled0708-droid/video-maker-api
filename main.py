@@ -11,7 +11,7 @@ import moviepy.video.fx as fx
 from PIL import Image
 from io import BytesIO
 
-# تكوين Cloudinary من المتغيرات البيئية
+# إعداد Cloudinary من المتغيرات البيئية
 cloudinary.config(
     cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME', 'khaledtn'),
     api_key=os.environ.get('CLOUDINARY_API_KEY', '948831227617247'),
@@ -23,6 +23,7 @@ app = Flask(__name__)
 CORS(app)
 
 def zoom_in_effect(clip, zoom_ratio=0.04):
+    """تأثير التكبير التدريجي على الصورة"""
     def effect(get_frame, t):
         img = get_frame(t)
         base_size = img.shape[:2]
@@ -42,27 +43,25 @@ def download_image(url):
     response = requests.get(url, timeout=10)
     if response.status_code == 200:
         img = Image.open(BytesIO(response.content))
-        # حفظ الصورة بصيغة PNG في ملف مؤقت
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
         img.save(temp_file.name)
         return temp_file.name
     else:
-        raise Exception(f"Failed to download image from {url}")
+        raise Exception(f"فشل تحميل الصورة من {url}")
 
 @app.route('/make_video', methods=['POST'])
 def start_production():
     try:
         data = request.get_json()
         if not data:
-            return jsonify({"status": "Error", "message": "Invalid JSON"}), 400
+            return jsonify({"status": "Error", "message": "JSON غير صالح"}), 400
 
         scenario = data.get('scenario', 'Ai_Film').replace(" ", "_")
         image_urls = data.get('image_urls', [])
 
         if not image_urls:
-            return jsonify({"status": "Error", "message": "No image URLs provided"}), 400
+            return jsonify({"status": "Error", "message": "لم يتم توفير روابط صور"}), 400
 
-        # مجلد مؤقت لتحميل الصور
         temp_dir = tempfile.mkdtemp()
         image_paths = []
 
@@ -71,15 +70,15 @@ def start_production():
             try:
                 img_path = download_image(url)
                 image_paths.append(img_path)
-                print(f"Downloaded {url} to {img_path}")
+                print(f"تم تحميل {url} إلى {img_path}")
             except Exception as e:
-                print(f"Error downloading image {idx}: {str(e)}")
+                print(f"خطأ في تحميل الصورة {idx}: {str(e)}")
                 continue
 
         if not image_paths:
-            return jsonify({"status": "Error", "message": "No valid images after downloading"}), 400
+            return jsonify({"status": "Error", "message": "لا توجد صور صالحة بعد التحميل"}), 400
 
-        # إنشاء مقاطع الفيديو (نفس الكود السابق)
+        # إنشاء مقاطع الفيديو
         all_clips = []
         for img_path in image_paths:
             clip = ImageClip(img_path, duration=5).resized(height=720)
@@ -124,13 +123,13 @@ def start_production():
 
         return jsonify({
             "status": "Success",
-            "message": "Video created successfully",
+            "message": "تم إنشاء الفيديو بنجاح",
             "video_url": secure_url,
             "video_title": scenario
         }), 200
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"خطأ: {str(e)}")
         return jsonify({
             "status": "Error",
             "message": str(e),
